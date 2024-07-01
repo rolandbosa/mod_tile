@@ -59,7 +59,7 @@ static int exit_pipe_fd;
 
 struct request_queue * render_request_queue;
 const char *malloc_conf = "abort:true,abort_conf:true,confirm_conf:true,prof_final:true,prof_leak:true";
-int renderd_exit_requested = 0;
+volatile int renderd_exit_requested = 0;
 
 static const char *cmdStr(enum protoCmd c)
 {
@@ -180,6 +180,8 @@ void request_exit(void)
 	if (write(exit_pipe_fd, &c, sizeof(c)) < 0) {
 		g_logger(G_LOG_LEVEL_ERROR, "Failed to write to the exit pipe: %s", strerror(errno));
 	}
+
+	renderd_exit_requested = 1;
 }
 
 void process_loop(int listen_fd)
