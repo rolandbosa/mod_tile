@@ -53,6 +53,9 @@ static pthread_t *render_threads;
 static pthread_t *slave_threads;
 static struct sigaction sigPipeAction, sigExitAction;
 static pthread_t stats_thread;
+static pthread_mutex_t stats_mutex;
+static pthread_cond_t stats_condition;
+static int stats_exit_requested = 0;
 #endif
 
 static int exit_pipe_fd;
@@ -325,7 +328,7 @@ void *stats_writeout_thread(void * arg)
 
 	g_logger(G_LOG_LEVEL_DEBUG, "Starting stats writeout thread: %lu", (unsigned long) pthread_self());
 
-	while (!renderd_exit_requested) {
+	while (1) {
 		request_queue_copy_stats(render_request_queue, &lStats);
 
 		reqPrioQueueLength = request_queue_no_requests_queued(render_request_queue, cmdRenderPrio);
@@ -387,7 +390,21 @@ void *stats_writeout_thread(void * arg)
 			}
 		}
 
-		sleep(10);
+		// block: wait for 10 seconds or the condition to be signaled. This allows the thread to be
+		// quickly interrupted and exited in case of a shutdown.
+		{
+			struct timespec expiry_time;
+			clock_gettime(CLOCK_REALTIME, &expiry_time);
+			expiry_time.tv_sec += 10;
+			pthread_mutex_lock(&stats_mutex);
+			while (ETIMEDOUT != pthread_cond_timedwait(&stats_condition, &stats_mutex, &expiry_time)) {
+				if (stats_exit_requested) {
+					pthread_mutex_unlock(&stats_mutex);
+					return NULL;
+				}
+			}
+			pthread_mutex_unlock(&stats_mutex);
+		}
 	}
 
 	return NULL;
@@ -861,6 +878,8 @@ int main(int argc, char **argv)
 
 	stats_thread = pthread_self();
 	if (strnlen(config.stats_filename, PATH_MAX - 1)) {
+		pthread_mutex_init(&stats_mutex, NULL);
+		pthread_cond_init(&stats_condition, NULL);
 		if (pthread_create(&stats_thread, NULL, stats_writeout_thread, NULL)) {
 			g_logger(G_LOG_LEVEL_CRITICAL, "Could not spawn stats writeout thread");
 			close(fd);
@@ -917,9 +936,16 @@ int main(int argc, char **argv)
 		g_logger(G_LOG_LEVEL_INFO, "Request queue closed.");
 
 		if (!pthread_equal(stats_thread, pthread_self())) {
+			g_logger(G_LOG_LEVEL_INFO, "Signaling the statistics thread to exit...");
+			pthread_mutex_lock(&stats_mutex);
+			stats_exit_requested = 1;
+			pthread_cond_signal(&stats_condition);
+			pthread_mutex_unlock(&stats_mutex);
 			g_logger(G_LOG_LEVEL_INFO, "Waiting for statistics thread to exit...");
 			pthread_join(stats_thread, NULL);
 			g_logger(G_LOG_LEVEL_INFO, "Statistics thread exited.");
+			pthread_cond_destroy(&stats_condition);
+			pthread_mutex_destroy(&stats_mutex);
 		}
 
 		for (i = 0; i < config.num_threads; i++) {
