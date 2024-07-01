@@ -285,12 +285,6 @@ void process_loop(int listen_fd)
 						close(fd);
 						pfd[i + PFD_SPECIAL_COUNT].fd = -1;
 					} else  {
-						if (cmd.cmd == cmdStop) {
-							g_logger(G_LOG_LEVEL_INFO, "Received STOP command. Exiting process_loop.");
-							renderd_exit_requested = 1;
-							return;
-						}
-
 						enum protoCmd rsp = rx_request(&cmd, fd);
 
 						if (rsp == cmdNotDone) {
