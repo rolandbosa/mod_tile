@@ -53,11 +53,15 @@ static pthread_t *render_threads;
 static pthread_t *slave_threads;
 static struct sigaction sigPipeAction, sigExitAction;
 static pthread_t stats_thread;
+static pthread_mutex_t stats_mutex;
+static pthread_cond_t stats_condition;
+static int stats_exit_requested = 0;
 #endif
 
 static int exit_pipe_fd;
 
 struct request_queue * render_request_queue;
+volatile int renderd_exit_requested = 0;
 
 static const char *cmdStr(enum protoCmd c)
 {
@@ -178,6 +182,8 @@ void request_exit(void)
 	if (write(exit_pipe_fd, &c, sizeof(c)) < 0) {
 		g_logger(G_LOG_LEVEL_ERROR, "Failed to write to the exit pipe: %s", strerror(errno));
 	}
+
+	renderd_exit_requested = 1;
 }
 
 void process_loop(int listen_fd)
@@ -204,7 +210,7 @@ void process_loop(int listen_fd)
 	pfd[PFD_EXIT_PIPE].fd = exit_pipe_read;
 	pfd[PFD_EXIT_PIPE].events = POLLIN;
 
-	while (1) {
+	while (!renderd_exit_requested) {
 		struct sockaddr_un in_addr;
 		socklen_t in_addrlen = sizeof(in_addr);
 		int incoming, num, i;
@@ -377,7 +383,21 @@ void *stats_writeout_thread(void * arg)
 			}
 		}
 
-		sleep(10);
+		// block: wait for 10 seconds or the condition to be signaled. This allows the thread to be
+		// quickly interrupted and exited in case of a shutdown.
+		{
+			struct timespec expiry_time;
+			clock_gettime(CLOCK_REALTIME, &expiry_time);
+			expiry_time.tv_sec += 10;
+			pthread_mutex_lock(&stats_mutex);
+			while (ETIMEDOUT != pthread_cond_timedwait(&stats_condition, &stats_mutex, &expiry_time)) {
+				if (stats_exit_requested) {
+					pthread_mutex_unlock(&stats_mutex);
+					return NULL;
+				}
+			}
+			pthread_mutex_unlock(&stats_mutex);
+		}
 	}
 
 	return NULL;
@@ -581,7 +601,7 @@ void *slave_thread(void * arg)
 
 	g_logger(G_LOG_LEVEL_DEBUG, "Starting slave thread: %lu", (unsigned long) pthread_self());
 
-	while (1) {
+	while (!renderd_exit_requested) {
 		if (pfd == FD_INVALID) {
 			pfd = client_socket_init(sConfig);
 
@@ -720,7 +740,7 @@ int main(int argc, char **argv)
 	int config_file_name_passed = 0;
 	int active_renderd_section_num_passed = 0;
 
-	int fd, i, j, k;
+	int fd, i, j;
 
 	int c;
 
@@ -849,7 +869,10 @@ int main(int argc, char **argv)
 		}
 	}
 
+	stats_thread = pthread_self();
 	if (strnlen(config.stats_filename, PATH_MAX - 1)) {
+		pthread_mutex_init(&stats_mutex, NULL);
+		pthread_cond_init(&stats_condition, NULL);
 		if (pthread_create(&stats_thread, NULL, stats_writeout_thread, NULL)) {
 			g_logger(G_LOG_LEVEL_CRITICAL, "Could not spawn stats writeout thread");
 			close(fd);
@@ -869,14 +892,14 @@ int main(int argc, char **argv)
 		}
 	}
 
+	int slave_thread_count = 0;
 	if (active_renderd_section_num == 0) {
 		// Only the master renderd opens connections to its slaves
-		k = 0;
 		slave_threads = (pthread_t *) malloc(sizeof(pthread_t) * num_slave_threads);
 
 		for (i = 1; i < MAX_SLAVES; i++) {
 			for (j = 0; j < config_slaves[i].num_threads; j++) {
-				if (pthread_create(&slave_threads[k++], NULL, slave_thread, (void *) &config_slaves[i])) {
+				if (pthread_create(&slave_threads[slave_thread_count++], NULL, slave_thread, (void *) &config_slaves[i])) {
 					g_logger(G_LOG_LEVEL_CRITICAL, "Could not spawn slave thread");
 					close(fd);
 					return 7;
@@ -893,11 +916,49 @@ int main(int argc, char **argv)
 	}
 
 	process_loop(fd);
+	g_logger(G_LOG_LEVEL_INFO, "Main thread returned.");
 
 	unlink(config.socketname);
 	free_map_sections(maps);
 	free_renderd_sections(config_slaves);
 	close(fd);
+
+	if (renderd_exit_requested) {
+		g_logger(G_LOG_LEVEL_INFO, "Closing request queue...");
+		request_queue_close(render_request_queue);
+		g_logger(G_LOG_LEVEL_INFO, "Request queue closed.");
+
+		if (!pthread_equal(stats_thread, pthread_self())) {
+			g_logger(G_LOG_LEVEL_INFO, "Signaling the statistics thread to exit...");
+			pthread_mutex_lock(&stats_mutex);
+			stats_exit_requested = 1;
+			pthread_cond_signal(&stats_condition);
+			pthread_mutex_unlock(&stats_mutex);
+			g_logger(G_LOG_LEVEL_INFO, "Waiting for statistics thread to exit...");
+			pthread_join(stats_thread, NULL);
+			g_logger(G_LOG_LEVEL_INFO, "Statistics thread exited.");
+			pthread_cond_destroy(&stats_condition);
+			pthread_mutex_destroy(&stats_mutex);
+		}
+
+		for (i = 0; i < config.num_threads; i++) {
+			g_logger(G_LOG_LEVEL_INFO, "Waiting for render thread %d/%d to exit...", i, config.num_threads);
+			pthread_join(render_threads[i], NULL);
+			g_logger(G_LOG_LEVEL_INFO, "Render thread %d/%d exited.", i, config.num_threads);
+		}
+
+		while (0 < --slave_thread_count) {
+			g_logger(G_LOG_LEVEL_INFO, "Waiting for slave thread %d to exit...", slave_thread_count);
+			pthread_join(slave_threads[slave_thread_count], NULL);
+			g_logger(G_LOG_LEVEL_INFO, "Slave thread %d exited.", slave_thread_count);
+		}
+
+		g_logger(G_LOG_LEVEL_INFO, "Destroying request queue...");
+		request_queue_destroy(&render_request_queue);
+		g_logger(G_LOG_LEVEL_INFO, "Request queue destroyed.");
+		
+	}
+
 	return 0;
 }
 #endif

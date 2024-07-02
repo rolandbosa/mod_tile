@@ -72,6 +72,7 @@ typedef struct {
 } xmlconfigitem;
 
 extern struct request_queue *render_request_queue;
+extern volatile int renderd_exit_requested;
 
 void statsRenderFinish(int z, long time);
 void request_exit(void);
