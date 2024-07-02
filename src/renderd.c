@@ -61,6 +61,7 @@ static int stats_exit_requested = 0;
 static int exit_pipe_fd;
 
 struct request_queue * render_request_queue;
+const char *malloc_conf = "abort:true,abort_conf:true,confirm_conf:true,prof_final:true,prof_leak:true";
 volatile int renderd_exit_requested = 0;
 
 static const char *cmdStr(enum protoCmd c)
