@@ -520,12 +520,12 @@ void request_queue_close(struct request_queue * queue)
 		return;
 	}
 
-	g_logger(G_LOG_LEVEL_DEBUG, "request_queue_close(%p)", queue);
+	g_logger(G_LOG_LEVEL_INFO, "request_queue_close(%p)", queue);
 	pthread_mutex_lock(&(queue->qLock));
 	queue->isClosing = 1;
 	pthread_cond_broadcast(&(queue->qCond));
 	pthread_mutex_unlock(&(queue->qLock));
-	g_logger(G_LOG_LEVEL_DEBUG, "request_queue_close(): isClosing flag now set.");
+	g_logger(G_LOG_LEVEL_INFO, "request_queue_close(): isClosing flag now set.");
 }
 
 void request_queue_destroy(struct request_queue **queue)

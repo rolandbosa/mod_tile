@@ -421,9 +421,9 @@ void *render_thread(void *arg)
 	}
 
 	struct item *item;
-	g_logger(G_LOG_LEVEL_DEBUG, "Render thread waiting for work...");
+	g_logger(G_LOG_LEVEL_INFO, "Render thread waiting for work...");
 	while ((item = request_queue_fetch_request(render_request_queue)) != NULL) {
-		g_logger(G_LOG_LEVEL_DEBUG, "Render thread received work: %p", item);
+		g_logger(G_LOG_LEVEL_INFO, "Render thread received work: %p", item);
 
 		enum protoCmd ret;
 		render_time = -1;
@@ -513,7 +513,7 @@ void *render_thread(void *arg)
 		}
 	}
 
-	g_logger(G_LOG_LEVEL_DEBUG, "Render thread is cleaning up...");
+	g_logger(G_LOG_LEVEL_INFO, "Render thread is cleaning up...");
 	for (iMaxConfigs = 0; iMaxConfigs < XMLCONFIGS_MAX; ++iMaxConfigs) {
 		if (maps[iMaxConfigs].ok) {
 			free((void *) maps[iMaxConfigs].output_format);
@@ -533,6 +533,6 @@ void *render_thread(void *arg)
 		}
 	}
 
-	g_logger(G_LOG_LEVEL_DEBUG, "Render thread exiting.");
+	g_logger(G_LOG_LEVEL_INFO, "Render thread exiting.");
 	return NULL;
 }
