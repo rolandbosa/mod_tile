@@ -280,6 +280,7 @@ int main(int argc, char **argv)
 				fprintf(stderr, "  -z, --min-zoom=ZOOM               filter input to only render tiles greater than or equal to this zoom level (default is '%d')\n", min_zoom_default);
 				fprintf(stderr, "\n");
 				fprintf(stderr, "  -h, --help                        display this help and exit\n");
+				fprintf(stderr, "  -v, --verbose                     turn on verbose output\n");
 				fprintf(stderr, "  -V, --version                     display the version number and exit\n");
 				fprintf(stderr, "\n");
 				fprintf(stderr, "If you are using --all, you can restrict the tile range by adding these options:\n");
